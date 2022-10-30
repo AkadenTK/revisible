@@ -110,9 +110,9 @@ local revisible = function(index, force_reset)
   end
 end
 
-local revisible_all = function()
+local revisible_all = function(force_reset)
   for index,_ in pairs(altered_players:union(invisible_players)) do
-    revisible(index)
+    revisible(index, force_reset)
   end
 end
 
@@ -172,8 +172,7 @@ windower.register_event('prerender', revisible_all)
 windower.register_event('logout', clear_all)
 windower.register_event('login', clear_all)
 windower.register_event('unload', function()
-  settings.enabled = false -- don't save!!
-  revisible_all()
+  revisible_all(true)
 end)
 windower.register_event('load', function()
   for _, mob in pairs(windower.ffxi.get_mob_array()) do
