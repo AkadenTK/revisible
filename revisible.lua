@@ -1,5 +1,5 @@
 _addon.name = 'revisible'
-_addon.version = '0.9'
+_addon.version = '0.9.1'
 _addon.author = 'Darkdoom;Rubenator;Akaden'
 _addon.commands = {'revisible'}
 
@@ -15,15 +15,15 @@ local defaults = {
   filter='alliance',
   show_nameplate=false,
   enabled=true,
+  debug=false,
 }
 local settings = config.load(defaults)
 
-local invis_flag = 0x20000000
+local others_invisible_flag = 0x20000000
+local self_invisible_flag = 0x8
 
 local invisible_players = S{}
-local revisible_players = S{}
-local last_packets = {}
-local translucent_players = S{}
+local altered_players = S{}
 
 local update_types = S{'Update Position','Update Status','Update Vitals','Update Name','Update Model',}
 
@@ -32,15 +32,15 @@ local log = function(message, ...)
 end
 
 local debug = function(message, ...)
-  if true then
+  if settings.debug then
     print('Revisible >> '..string.format(message, ...))
   end
 end
 
 local show_help = function(feature) 
   if feature == 'nameplate' then
-    log('Unknown sub-command for "nameplate" command: ')
-    log('nameplate [show|hide]           Translucent players will show or hide their nameplate while translucent')
+    log('Unknown sub-command for "name" command: ')
+    log('name [show|hide]                Translucent players will show or hide their nameplate while translucent')
   elseif feature == 'filter' then
     log('Unknown sub-command for "filter" command: ')
     log('filter [all|party|alliance]     Filter to invisible players in your party or alliance, or include all invisible players')
@@ -48,7 +48,8 @@ local show_help = function(feature)
     log('Show invisible players as translucent instead. Available commands:')
     log('[enable|disable]                Enable or disable the addon')
     log('filter [all|party|alliance]     Filter to invisible players in your party or alliance, or include all invisible players')
-    log('nameplate [show|hide]           Translucent players will show or hide their nameplate while translucent')
+    log('name [show|hide]                Translucent players will show or hide their nameplate while translucent. Toggles the state if the value is not provided.')
+    log('debug [on|off]                  Enable or disable debug messages. Toggles the state if the value is not provided.')
   end
 end
 
@@ -67,141 +68,123 @@ local is_player_filtered = function(index)
   return false
 end
 
-local restore_packets = function(index)
-  if last_packets[index] and revisible_players:contains(index) then
-    for t, _ in pairs(update_types) do
-      if last_packets[index][t] then
-        debug('Restored packet "%s" for %d', t, index)
-        windower.packets.inject_incoming(0xD, last_packets[index][t])
+local revisible = function(index, force_reset)
+  if invisible_players:contains(index) then
+    local do_revisible = (not force_reset) and settings.enabled and is_player_filtered(index)
+
+    if do_revisible then
+      -- Set player to translucent instead of invisible
+
+      if not altered_players:contains(index) then
+        debug('Set %d to translucent', index)
       end
-    end
-    last_packets[index] = nil
-    revisible_players:remove(index)
-  end
-end
 
-local toggle_translucent = function(index, flag, skip_restore_packet)
-  local mob = windower.ffxi.get_mob_by_index(index)
-  if not mob then
-    -- clear data, we can't find the mob
-    translucent_players:remove(index)
-    invisible_players:remove(index)
-    last_packets[index] = nil
-
-    return
-  end
-
-  if flag then
-    _FlagChanger.SetEntityTranslucent(index) 
-    if settings.show_nameplate then
-      _FlagChanger.ShowEntityName(index) 
+      _FlagChanger.RemoveEntityInvisible(index)
+      _FlagChanger.SetEntityTranslucent(index) 
+      if settings.show_nameplate then
+        _FlagChanger.ShowEntityName(index) 
+      else
+        _FlagChanger.HideEntityName(index) 
+      end
+      altered_players:add(index)
     else
-      _FlagChanger.HideEntityName(index) 
+      -- Set player to invisible
+
+      if altered_players:contains(index) then
+        debug('Set %d to invisible', index)
+      end
+
+      _FlagChanger.SetEntityInvisible(index)
+      altered_players:remove(index)
     end
-    translucent_players:add(index)
-  else    
-    if translucent_players:contains(index) then
-      _FlagChanger.SetEntityOpaque(index) 
-      _FlagChanger.ShowEntityName(index) 
-      translucent_players:remove(index)
+  else
+    -- Set player to visible.
+
+    if altered_players:contains(index) then
+      debug('Set %d to visible', index)
     end
+
+    _FlagChanger.SetEntityOpaque(index) 
+    _FlagChanger.ShowEntityName(index) 
+    altered_players:remove(index)
   end
 end
 
-local transluce = function()
-  if not settings.enabled then
-    for index,_ in pairs(translucent_players:union(invisible_players)) do
-      toggle_translucent(index, false)
-      restore_packets(index)
-    end
-    
-    return
-  end
-
-  -- set opaque: players that we've set translucent, but are no longer in the tracked players
-  for index,_ in pairs(translucent_players:diff(invisible_players)) do
-    toggle_translucent(index, false)
-    restore_packets(index)
-  end
-  
-
-  for index,_ in pairs(invisible_players) do
-    if is_player_filtered(index) then
-      toggle_translucent(index, true)
-    else
-      toggle_translucent(index, false)
-      restore_packets(index)
-    end
+local revisible_all = function()
+  for index,_ in pairs(altered_players:union(invisible_players)) do
+    revisible(index)
   end
 end
 
--- Clear everything. This happens on zone, logout, unload, etc.
-local clear_data = function(restore)
-  for index,_ in pairs(translucent_players:union(invisible_players)) do
-    toggle_translucent(index, false)
-    if restore then
-      restore_packets(index)
-    end
-  end
-
-  last_packets = {}
-
+-- Clear lists.
+local clear_all = function()
   invisible_players:clear()
-  translucent_players:clear()
+  altered_players:clear()
 end
 
 windower.register_event('incoming chunk',function(id, data, modified, injected, blocked)
-  if (id == 0xD) and settings.enabled and not injected then	
-    local packet = packets.parse('incoming', modified)
-    
-    if packet.Despawn then 
-      -- clear despawning characters' data
-      invisible_players:remove(packet.Index)
-      revisible_players:remove(packet.Index)
+  if injected then return end
 
-      toggle_translucent(packet.Index, false)
+  if id == 0xD or id == 0x037 then
+    local packet = packets.parse('incoming', modified)
+    local index = packet.Index
+    
+    if packet.Despawn and index then 
+      -- clear despawning characters' data
+      debug('Despawn Player: %d', index)
+      revisible(index, true)
+
+      invisible_players:remove(index)
+      altered_players:remove(index)
       return
     end
 
-    local build_packet = false
-    if packet['Update Vitals'] then
+    local is_invisible = nil
+    if id == 0xD and packet['Update Vitals'] then
       -- Invisible flag only matters on vitals updates (for some reason)
+      is_invisible = bit.band(packet["Flags"], others_invisible_flag) == others_invisible_flag
+    elseif id == 0x37 then
+      is_invisible = bit.band(packet['_flags3'], self_invisible_flag) == self_invisible_flag
+      index = windower.ffxi.get_player().index
+    end
 
-      if bit.band(packet["Flags"], invis_flag) == invis_flag then  -- if the character is invisible
-        if is_player_filtered(packet.Index) then
-          build_packet = true
-          packet["Flags"] = bit.bxor(packet["Flags"], invis_flag)  -- turn off invisible flag
-          if not revisible_players:contains(packet.Index) then 
-            debug('Disabled invisible for %d', packet.Index)
-          end
-          revisible_players:add(packet.Index)
-        end
-        invisible_players:add(packet.Index)
+    if is_invisible ~= nil then
+      if is_invisible then
+        if not invisible_players:contains(index) then
+          invisible_players:add(index)
+          debug('Invisible Players: %s', invisible_players:filter(function(i) return windower.ffxi.get_mob_by_index(i) end):map(function(i) return windower.ffxi.get_mob_by_index(i).name end):concat(', '))
+
+          revisible(index)
+        end        
       else
-        invisible_players:remove(packet.Index)
-        revisible_players:remove(packet.Index)
-      end
-    end
+        if invisible_players:contains(index) then
+          invisible_players:remove(index)
+          debug('Invisible Players: %s', invisible_players:filter(function(i) return windower.ffxi.get_mob_by_index(i) end):map(function(i) return windower.ffxi.get_mob_by_index(i).name end):concat(', '))
 
-    -- store last packets for later if we need to re-invisible the players.
-    last_packets[packet.Index] = last_packets[packet.Index] or {}
-    for update_type, _ in pairs(update_types) do
-      if packet[update_type] then 
-        last_packets[packet.Index][update_type] = modified 
+          revisible(index)
+        end
       end
-    end
-
-    if build_packet then
-      return packets.build(packet)
     end
   end
 end)
 
-windower.register_event('prerender', transluce)
-windower.register_event('zone change', function() clear_data(false) end)
-windower.register_event('logout', function() clear_data(false) end)
-windower.register_event('login', function() clear_data(false) end)
-windower.register_event('unload', function() clear_data(true) end)
+windower.register_event('prerender', revisible_all)
+windower.register_event('logout', clear_all)
+windower.register_event('login', clear_all)
+windower.register_event('unload', function()
+  settings.enabled = false -- don't save!!
+  revisible_all()
+end)
+windower.register_event('load', function()
+  for _, mob in pairs(windower.ffxi.get_mob_array()) do
+    if mob.valid_target and mob.entity_type == 8 and not mob.is_npc then
+      if _FlagChanger.IsEntityInvisible(mob.index) then
+        invisible_players:add(mob.index)
+      end
+    end
+  end
+  debug('Invisible Players: %s', invisible_players:filter(function(i) return windower.ffxi.get_mob_by_index(i) end):map(function(i) return windower.ffxi.get_mob_by_index(i).name end):concat(', '))
+end)
 
 local enable_keywords = S{'enable','on','activate','start','show'}
 local disable_keywords = S{'disable','off','deactivate','stop','hide'}
@@ -209,7 +192,7 @@ local filter_keywords = S{'filter','f'}
 local filter_type_keywords = S{'party','alliance','all'}
 local filter_type_label = {['party']='party members',['alliance']='alliance members',['all']='players'}
 local nameplate_toggle_keywords = S{'name','nameplate'}
-
+local debug_keywords = S{'debug'}
 windower.register_event('addon command', function(cmd, ...)
   local args = T{...}
   cmd = cmd:lower()
@@ -218,36 +201,43 @@ windower.register_event('addon command', function(cmd, ...)
     settings.enabled = true
     log('Invisible %s will be shown as translucent.', filter_type_label[settings.filter])
     settings:save()
-    transluce()
+    revisible_all()
   elseif disable_keywords:contains(cmd) then
     settings.enabled = false
     log('Invisible %s will remain invisible.', filter_type_label[settings.filter])
     settings:save()
-    transluce()
+    revisible_all()
   elseif filter_keywords:contains(cmd) and #args > 0 then
     if filter_type_keywords:contains(args[1]:lower()) then
       settings.filter = args[1]:lower()
       settings.enabled = true
       log('Invisible %s will be shown as translucent.', filter_type_label[settings.filter])
       settings:save()
-      transluce()
+      revisible_all()
     else
       show_help('filter')
     end
   elseif nameplate_toggle_keywords:contains(cmd) then
-    if enable_keywords:contains(args[1]:lower()) then
+    if args[1] and enable_keywords:contains(args[1]:lower()) then
       settings.show_nameplate = true
-      log('Translucent players\' nameplates will be visible.')
-      settings:save()
-      transluce()
-    elseif disable_keywords:contains(args[1]:lower()) then
+    elseif args[1] and disable_keywords:contains(args[1]:lower()) then
       settings.show_nameplate = false
-      log('Translucent players\' nameplates will be hidden.')
-      settings:save()
-      transluce()
     else
-      show_help('nameplate')
+      settings.show_nameplate = not settings.show_nameplate
     end
+    settings:save()
+    revisible_all()
+    log('Translucent players\' nameplates will be %s.', settings.show_nameplate and 'visible' or 'hidden')
+  elseif debug_keywords:contains(cmd) then
+    if args[1] and enable_keywords:contains(args[1]:lower()) then
+      settings.debug = true
+    elseif args[1] and disable_keywords:contains(args[1]:lower()) then
+      settings.debug = false
+    else
+      settings.debug = not settings.debug
+    end
+    settings:save()
+    log('Debug messages are now %s.', settings.debug and 'on' or 'off')
   else
     show_help()
   end
