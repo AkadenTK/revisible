@@ -1,5 +1,5 @@
 _addon.name = 'revisible'
-_addon.version = '0.9.1'
+_addon.version = '0.9.2'
 _addon.author = 'Darkdoom;Rubenator;Akaden'
 _addon.commands = {'revisible'}
 
@@ -169,8 +169,7 @@ windower.register_event('incoming chunk',function(id, data, modified, injected, 
 end)
 
 windower.register_event('prerender', revisible_all)
-windower.register_event('logout', clear_all)
-windower.register_event('login', clear_all)
+windower.register_event('logout', 'login', 'zone change', clear_all)
 windower.register_event('unload', function()
   revisible_all(true)
 end)
