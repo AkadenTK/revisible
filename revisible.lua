@@ -1,5 +1,5 @@
 _addon.name = 'revisible'
-_addon.version = '0.9.2'
+_addon.version = '1.0'
 _addon.author = 'Darkdoom;Rubenator;Akaden'
 _addon.commands = {'revisible'}
 
@@ -38,17 +38,17 @@ local debug = function(message, ...)
 end
 
 local show_help = function(feature) 
-  if feature == 'nameplate' then
-    log('Unknown sub-command for "name" command: ')
-    log('name [show|hide]                Translucent players will show or hide their nameplate while translucent')
-  elseif feature == 'filter' then
+  if feature == 'filter' then
     log('Unknown sub-command for "filter" command: ')
     log('filter [all|party|alliance]     Filter to invisible players in your party or alliance, or include all invisible players')
+  -- elseif feature == 'nameplate' then
+  --   log('Unknown sub-command for "name" command: ')
+  --   log('name [show|hide]                Translucent players will show or hide their nameplate while translucent')
   else
     log('Show invisible players as translucent instead. Available commands:')
     log('[enable|disable]                Enable or disable the addon')
     log('filter [all|party|alliance]     Filter to invisible players in your party or alliance, or include all invisible players')
-    log('name [show|hide]                Translucent players will show or hide their nameplate while translucent. Toggles the state if the value is not provided.')
+    -- log('name [show|hide]                Translucent players will show or hide their nameplate while translucent. Toggles the state if the value is not provided.')
     log('debug [on|off]                  Enable or disable debug messages. Toggles the state if the value is not provided.')
   end
 end
@@ -79,13 +79,7 @@ local revisible = function(index, force_reset)
         debug('Set %d to translucent', index)
       end
 
-      _FlagChanger.RemoveEntityInvisible(index)
       _FlagChanger.SetEntityTranslucent(index) 
-      if settings.show_nameplate then
-        _FlagChanger.ShowEntityName(index) 
-      else
-        _FlagChanger.HideEntityName(index) 
-      end
       altered_players:add(index)
     else
       -- Set player to invisible
@@ -104,8 +98,7 @@ local revisible = function(index, force_reset)
       debug('Set %d to visible', index)
     end
 
-    _FlagChanger.SetEntityOpaque(index) 
-    _FlagChanger.ShowEntityName(index) 
+    _FlagChanger.SetEntityOpaque(index)
     altered_players:remove(index)
   end
 end
@@ -215,17 +208,17 @@ windower.register_event('addon command', function(cmd, ...)
     else
       show_help('filter')
     end
-  elseif nameplate_toggle_keywords:contains(cmd) then
-    if args[1] and enable_keywords:contains(args[1]:lower()) then
-      settings.show_nameplate = true
-    elseif args[1] and disable_keywords:contains(args[1]:lower()) then
-      settings.show_nameplate = false
-    else
-      settings.show_nameplate = not settings.show_nameplate
-    end
-    settings:save()
-    revisible_all()
-    log('Translucent players\' nameplates will be %s.', settings.show_nameplate and 'visible' or 'hidden')
+  -- elseif nameplate_toggle_keywords:contains(cmd) then
+  --   if args[1] and enable_keywords:contains(args[1]:lower()) then
+  --     settings.show_nameplate = true
+  --   elseif args[1] and disable_keywords:contains(args[1]:lower()) then
+  --     settings.show_nameplate = false
+  --   else
+  --     settings.show_nameplate = not settings.show_nameplate
+  --   end
+  --   settings:save()
+  --   revisible_all()
+  --   log('Translucent players\' nameplates will be %s.', settings.show_nameplate and 'visible' or 'hidden')
   elseif debug_keywords:contains(cmd) then
     if args[1] and enable_keywords:contains(args[1]:lower()) then
       settings.debug = true
